@@ -1,4 +1,3 @@
-cat > flake.nix <<'EOF'
 {
   description = "Ubuntu Server AI coding VM managed with Nix System Manager";
 
@@ -21,4 +20,3 @@ cat > flake.nix <<'EOF'
       };
     };
 }
-EOF

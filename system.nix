@@ -1,4 +1,3 @@
-cat > system.nix <<'EOF'
 { pkgs, ... }:
 
 let
@@ -313,4 +312,3 @@ in
     '';
   };
 }
-EOF

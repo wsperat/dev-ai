@@ -55,7 +55,7 @@ let
       curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
         | /usr/bin/sudo /usr/bin/tee /etc/apt/keyrings/docker.asc >/dev/null
       /usr/bin/sudo /usr/bin/chmod a+r /etc/apt/keyrings/docker.asc
-      
+
       # shellcheck disable=SC1091
       . /etc/os-release
       codename="''${UBUNTU_CODENAME:-''${VERSION_CODENAME:-}}"
@@ -186,6 +186,26 @@ DOCKER_SOURCES
     '';
   };
 
+  aiVmSetOpencodePassword = pkgs.writeShellApplication {
+    name = "ai-vm-set-opencode-password";
+    runtimeInputs = with pkgs; [ bash coreutils openssl ];
+    text = ''
+      set -euo pipefail
+
+      password="''${1:-$(openssl rand -base64 24)}"
+      tmp="$(mktemp)"
+      trap 'rm -f "$tmp"' EXIT
+
+      printf 'OPENCODE_SERVER_PASSWORD=%s\n' "$password" > "$tmp"
+      /usr/bin/sudo /usr/bin/install -m 0600 "$tmp" /etc/default/opencode-web
+      /usr/bin/sudo /usr/bin/systemctl restart opencode-web.service
+
+      echo "Updated /etc/default/opencode-web and restarted opencode-web.service"
+      echo "Username: opencode"
+      echo "Password: $password"
+    '';
+  };
+
 in
 {
   config = {
@@ -198,6 +218,7 @@ in
       aiVmUp
       aiVmDown
       aiVmPullModel
+      aiVmSetOpencodePassword
     ] ++ (with pkgs; [
       git
       git-lfs
@@ -257,8 +278,9 @@ in
           ports:
             - "127.0.0.1:11434:11434"
           volumes:
-            - ollama:/root/.ollama
+            - /mnt/truenas/models:/root/.ollama/models
           environment:
+            OLLAMA_MODELS: "/root/.ollama/models"
             OLLAMA_CONTEXT_LENGTH: "64000"
             OLLAMA_KEEP_ALIVE: "24h"
           deploy:
@@ -268,28 +290,32 @@ in
                   - driver: nvidia
                     count: all
                     capabilities: [gpu]
+    '';
 
-        openhands:
-          image: docker.openhands.dev/openhands/openhands:1.7
-          container_name: openhands-app
-          restart: unless-stopped
-          profiles:
-            - ui
-          ports:
-            - "127.0.0.1:3000:3000"
-          volumes:
-            - /var/run/docker.sock:/var/run/docker.sock
-            - openhands:/.openhands
-          environment:
-            AGENT_SERVER_IMAGE_REPOSITORY: ghcr.io/openhands/agent-server
-            AGENT_SERVER_IMAGE_TAG: 1.19.1-python
-            LOG_ALL_EVENTS: "true"
-          extra_hosts:
-            - "host.docker.internal:host-gateway"
+    environment.etc."ai-dev-vm/opencode-web.env.example".text = ''
+      OPENCODE_SERVER_PASSWORD=change-me
+    '';
 
-      volumes:
-        ollama:
-        openhands:
+    environment.etc."systemd/system/opencode-web.service".text = ''
+      [Unit]
+      Description=OpenCode Web UI
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      User=walter
+      Group=walter
+      WorkingDirectory=/mnt/truenas/Personal/dev-ai
+      Environment=HOME=/home/walter
+      Environment=BROWSER=/bin/true
+      EnvironmentFile=-/etc/default/opencode-web
+      ExecStart=/run/current-system/sw/bin/opencode web --hostname 0.0.0.0 --port 4090
+      Restart=always
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
     '';
 
     environment.etc."ai-dev-vm/AGENTS.example.md".text = ''

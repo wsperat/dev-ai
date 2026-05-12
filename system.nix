@@ -55,7 +55,8 @@ let
       curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
         | /usr/bin/sudo /usr/bin/tee /etc/apt/keyrings/docker.asc >/dev/null
       /usr/bin/sudo /usr/bin/chmod a+r /etc/apt/keyrings/docker.asc
-
+      
+      # shellcheck disable=SC1091
       . /etc/os-release
       codename="''${UBUNTU_CODENAME:-''${VERSION_CODENAME:-}}"
       arch="$(/usr/bin/dpkg --print-architecture)"

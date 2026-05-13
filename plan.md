@@ -9,16 +9,33 @@ Proxmox host
   └── Ubuntu Server VM, q35 + OVMF + NVIDIA PCIe passthrough
         ├── Ubuntu-owned kernel + NVIDIA driver
         ├── Nix + System Manager
-        │     ├── agent CLIs: OpenCode, aider, Goose, Ollama CLI
+        │     ├── primary coding interface: opencode
+        │     ├── secondary browser interface: opencode web
+        │     ├── sidecar tools: aider, Goose, gh, tmux, git worktrees
         │     ├── dev tools: git, gh, uv, Node, Python, Go, Rust, etc.
-        │     ├── reproducible scripts
+        │     ├── reproducible scripts and project templates
         │     └── generated /etc/ai-dev-vm/compose.yaml
         └── Docker + NVIDIA Container Toolkit
               ├── Ollama container with GPU access
-              └── optional opencode web UI service
+              └── optional Qdrant container for project memory/search
 ```
 
-The primary Claude Code replacement here is **OpenCode + Ollama** for terminal-based agentic coding. I’d also install **aider** for precise Git-based editing, **Goose** for general agent workflows/MCP-style extension work, and expose **`opencode web`** as an optional browser UI for remote access. OpenCode is an open-source terminal coding agent, aider connects to local Ollama models, Goose supports CLI/Desktop/API usage and Ollama among other providers, and `opencode web` provides the browser path while staying aligned with the same local Ollama-backed setup. ([OpenCode][2])
+The target is not just “several AI tools on a VM.” It is a local Claude Code-style coding environment: one terminal-first agent loop, repository-scoped instructions, shell/git/test tool use, persistent project context, resumable sessions, model routing between fast and heavy local models, and an optional browser view of the same workflow.
+
+The primary interface should be **OpenCode + Ollama**. Aider stays available for narrow diff-oriented patch work, Goose stays available for broader MCP-style workflows, and Qdrant is optional project memory rather than a replacement for reading the repository. Multi-agent behavior should be conservative: the main OpenCode session remains the coordinator, and sidecar agents run only in isolated git worktrees for research, review, tests, or bounded implementation tasks. ([OpenCode][2])
+
+## Claude Code parity goals
+
+The implementation should optimize for these behaviors:
+
+- Start from a terminal inside a Git repository with one command.
+- Read repository instructions automatically from `AGENTS.md`, the local Claude Code equivalent of `CLAUDE.md`.
+- Inspect files, edit code, run shell commands, run tests, and explain results in one continuous loop.
+- Keep all state local to the VM and the repository unless explicitly configured otherwise.
+- Use a small/fast local model for cheap planning and a larger coding model for hard implementation.
+- Keep a browser UI available at `http://192.168.1.37:3000`, but treat terminal usage as the primary path.
+- Support sidecar agents only when they have separate worktrees and clearly bounded write ownership.
+- Use Qdrant only for searchable project memory, summaries, and retrieved notes; source files and tests remain the authority.
 
 ---
 
@@ -554,8 +571,9 @@ in
           ports:
             - "127.0.0.1:11434:11434"
           volumes:
-            - ollama:/root/.ollama
+            - /mnt/truenas/models:/root/.ollama/models
           environment:
+            OLLAMA_MODELS: "/root/.ollama/models"
             OLLAMA_CONTEXT_LENGTH: "64000"
             OLLAMA_KEEP_ALIVE: "24h"
           deploy:
@@ -566,8 +584,15 @@ in
                     count: all
                     capabilities: [gpu]
 
-      volumes:
-        ollama:
+        qdrant:
+          image: qdrant/qdrant:latest
+          container_name: qdrant
+          restart: unless-stopped
+          ports:
+            - "127.0.0.1:6333:6333"
+            - "127.0.0.1:6334:6334"
+          volumes:
+            - /mnt/truenas/qdrant:/qdrant/storage
     '';
 
     environment.etc."ai-dev-vm/opencode-web.env.example".text = ''
@@ -746,31 +771,25 @@ Use the biggest model that fits your GPU at the context size you need. Ollama’
 
 ## 9. Use OpenCode as the Claude Code-style terminal agent
 
-Go to a Git repo:
+This is the main Claude Code replacement path. Start it from the repository you want to edit, not from the VM configuration repo.
 
 ```bash
 mkdir -p ~/src
 cd ~/src
 git clone <your-repo>
 cd <your-repo>
+git switch -c ai/<task-name>
+opencode
 ```
 
-Copy the agent instruction template:
+For a one-shot task, use `opencode run` from an interactive terminal or SSH session with a TTY:
 
 ```bash
-cp /etc/ai-dev-vm/AGENTS.example.md ./AGENTS.md
-git add AGENTS.md
-git commit -m "Add local agent instructions"
+cd ~/src/<your-repo>
+opencode run "read the repo instructions, inspect the codebase, and summarize the build and test workflow"
 ```
 
-Launch OpenCode through Ollama:
-
-```bash
-export OLLAMA_HOST=http://127.0.0.1:11434
-ollama launch opencode
-```
-
-Ollama’s OpenCode integration documents `ollama launch opencode`, and notes that OpenCode needs a larger context window, recommending at least 64k tokens. ([Ollama][10])
+This should feel like Claude Code in daily use: start in a repo, ask for an implementation, review the diff, run tests, then commit when the result is acceptable.
 
 Good first prompts inside OpenCode:
 
@@ -779,24 +798,113 @@ Read AGENTS.md, inspect this repository, and summarize the build/test workflow.
 ```
 
 ```text
-Find the smallest useful improvement in this project, implement it, and run the relevant tests.
+Implement the smallest safe fix for the issue below. Add or update tests first, run them, then summarize the diff.
 ```
 
 ```text
-Add a failing regression test for the bug described below, then fix the bug.
-```
-
-For safety, do agentic work in Git branches:
-
-```bash
-git switch -c ai/first-local-agent-test
+Review the current branch against main. Focus on correctness bugs, missing tests, and behavior changes.
 ```
 
 ---
 
-## 10. Use aider for precise Git-based edits
+## 10. Define the project contract with `AGENTS.md`
 
-Aider is especially good when you want a more controlled pair-programming workflow with clear diffs.
+Every repository edited by this VM should have a checked-in `AGENTS.md`. Treat it as the local equivalent of Claude Code's repository memory.
+
+Start with the VM template:
+
+```bash
+cp /etc/ai-dev-vm/AGENTS.example.md ./AGENTS.md
+```
+
+Then make it project-specific. It should include:
+
+- The exact commands for formatting, linting, type checking, tests, and build.
+- The package manager and runtime versions to use.
+- The code style and architectural boundaries that matter.
+- Files or directories the agent should not touch without explicit permission.
+- The expected git workflow for branches, commits, and review.
+- Known slow tests, flaky tests, and safe targeted test commands.
+
+Commit it with the project:
+
+```bash
+git add AGENTS.md
+git commit -m "Add agent instructions"
+```
+
+---
+
+## 11. Optional: add Qdrant-backed project memory
+
+Qdrant is useful for long-running projects where the agent should retrieve prior summaries, decisions, and indexed notes. It should not replace repository inspection. Source files, tests, and Git history remain authoritative.
+
+The Compose stack should expose Qdrant only on localhost:
+
+```text
+http://127.0.0.1:6333
+```
+
+Use it for:
+
+- Project summaries generated after major sessions.
+- Architecture decision notes.
+- Searchable notes about test commands, release steps, and subsystem ownership.
+- Retrieved context for sidecar agents that do not need the whole repository loaded.
+
+A later implementation pass should add a small `ai-vm-index-project` script that:
+
+```bash
+cd ~/src/<your-repo>
+ai-vm-index-project
+```
+
+That script should chunk selected docs and summaries, embed them with a local embedding model, and upsert them into a Qdrant collection named after the repository. Do not index secrets, `.env` files, build artifacts, or dependency directories.
+
+---
+
+## 12. Optional: run bounded sidecar agents
+
+Claude Code feels strongest when one agent owns the loop. For this VM, multi-agent orchestration should keep that property: one primary OpenCode session coordinates, while sidecars do bounded work in separate git worktrees.
+
+Use sidecar agents for tasks like:
+
+- Review the branch for correctness issues.
+- Investigate a subsystem and write notes.
+- Run slow verification while the main agent continues coding.
+- Implement a clearly isolated change in a separate worktree.
+
+Use git worktrees to avoid overlapping edits:
+
+```bash
+cd ~/src/<your-repo>
+git worktree add ../<repo>-review -b ai/review-pass
+cd ../<repo>-review
+opencode run "review this branch for correctness bugs and missing tests; do not modify files"
+```
+
+For implementation sidecars, assign narrow ownership:
+
+```bash
+cd ~/src/<repo>-worker-auth
+opencode run "only edit files under src/auth. Add tests for the token refresh bug and fix it. Do not touch unrelated files."
+```
+
+The main session should inspect sidecar diffs before merging anything back. Avoid several agents writing to the same working tree.
+
+A later implementation pass should add an `ai-vm-agent` wrapper with subcommands like:
+
+```bash
+ai-vm-agent review <repo-path>
+ai-vm-agent worker <repo-path> <branch-name> <prompt-file>
+ai-vm-agent status
+```
+
+---
+
+## 13. Use aider for narrow patch work
+
+Aider is useful when you want a more controlled pair-programming workflow with clear diffs. Keep it as a sidecar tool, not the default interface.
 
 ```bash
 cd ~/src/<your-repo>
@@ -814,7 +922,9 @@ Refactor the parser module to reduce duplication. Keep behavior unchanged. Add o
 
 ---
 
-## 11. Use Goose for broader agent workflows
+## 14. Use Goose for broader workflows
+
+Use Goose for broader agent workflows and MCP-style extension experiments. It is not the primary Claude Code replacement, but it can handle research, release checklists, and integrations that are outside one coding loop.
 
 Configure Goose interactively:
 
@@ -827,8 +937,6 @@ Pick an Ollama/local provider where available, then use:
 ```bash
 goose session
 ```
-
-Goose is a general-purpose local AI agent with CLI/Desktop/API modes, and its docs state that it works with Ollama among many providers and can connect to extensions via MCP. ([goose-docs.ai][12])
 
 Good Goose use cases:
 
@@ -846,9 +954,9 @@ Create a release checklist based on the current repo tooling.
 
 ---
 
-## 12. Optional: run `opencode web`
+## 15. Optional: run `opencode web`
 
-Instead of OpenHands, expose the browser UI directly from OpenCode as a systemd service. After applying the System Manager config, enable and start it:
+Expose the same OpenCode workflow through a browser as a secondary interface. After applying the System Manager config, enable and start it:
 
 ```bash
 sudo systemctl daemon-reload
@@ -862,23 +970,23 @@ systemctl status opencode-web.service
 curl -I http://127.0.0.1:3000
 ```
 
-Access it safely over SSH port forwarding from your workstation:
-
-```bash
-ssh -N -L 3000:127.0.0.1:3000 dev@<vm-ip>
-```
-
-Then open your browser to:
+Access it from your workstation:
 
 ```text
-http://127.0.0.1:3000
+http://192.168.1.37:3000
 ```
 
-If you want password protection, create `/etc/default/opencode-web` with `OPENCODE_SERVER_PASSWORD=...` before starting the service. This keeps the browser path aligned with the same local Ollama-backed OpenCode setup without introducing a separate privileged UI container.
+A healthy protected response is `401 Unauthorized` when no credentials are sent. Rotate the password with:
+
+```bash
+ai-vm-set-opencode-password
+```
+
+This keeps the browser path aligned with the same local Ollama-backed OpenCode setup without introducing a separate privileged UI container.
 
 ---
 
-## 13. Make each project reproducible with Nix
+## 16. Make each project reproducible with Nix
 
 Inside each code repo, add a project flake. Example for a Python project:
 
@@ -970,7 +1078,7 @@ The important rule is: **the VM has general tools, but each repo owns its exact 
 
 ---
 
-## 14. Pin container images for better reproducibility
+## 17. Pin container images for better reproducibility
 
 The tutorial starts with:
 
@@ -1026,7 +1134,7 @@ For stricter pinning, install exact Docker/NVIDIA package versions from APT once
 
 ---
 
-## 15. Day-2 operations
+## 18. Day-2 operations
 
 Update Nix-managed tools:
 
@@ -1064,7 +1172,7 @@ Ollama’s context docs recommend checking `ollama ps` to confirm context alloca
 
 ---
 
-## 16. Troubleshooting
+## 19. Troubleshooting
 
 ### `nvidia-smi` fails inside the Ubuntu VM
 
@@ -1137,10 +1245,13 @@ ai-vm-pull-model devstral
 cd ~/src/<repo>
 git switch -c ai/some-task
 
-# Terminal agent
-ollama launch opencode
+# Primary terminal agent
+opencode
 
-# Controlled diff-based editing
+# One-shot sidecar review in another worktree
+opencode run "review this branch for correctness bugs and missing tests; do not modify files"
+
+# Controlled diff-based editing when useful
 aider --model ollama_chat/devstral
 
 # Before accepting changes
@@ -1149,7 +1260,7 @@ nix develop -c pytest
 git commit
 ```
 
-This gives you a local, reproducible Ubuntu Server VM with GPU-backed local models, a Claude Code-like terminal workflow, and a clean path for testing/iterating inside Git-controlled projects.
+This gives you a local, reproducible Ubuntu Server VM with GPU-backed local models, a Claude Code-like terminal workflow, optional browser access, project memory, and bounded sidecar agents for review or isolated implementation work.
 
 [1]: https://ubuntu.com/server/docs/how-to/graphics/install-nvidia-drivers/ "NVIDIA drivers installation - Ubuntu Server documentation"
 [2]: https://opencode.ai/docs/ "Intro | AI coding agent built for the terminal"

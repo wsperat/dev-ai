@@ -20,6 +20,6 @@
       }
     }
   },
-  "model": "ollama/qwen3-coder:30b",
+  "model": "ollama/devstral:latest",
   "small_model": "ollama/qwen2.5-coder:3b"
 }

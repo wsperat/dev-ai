@@ -26,8 +26,20 @@ let
 
       if [ -n "$driver_spec" ]; then
         /usr/bin/sudo /usr/bin/ubuntu-drivers install --gpgpu "$driver_spec"
+        driver_package="nvidia-driver-''${driver_spec#nvidia:}"
       else
         /usr/bin/sudo /usr/bin/ubuntu-drivers install --gpgpu
+        driver_package="$(/usr/bin/ubuntu-drivers list --gpgpu | /usr/bin/head -n1 | /usr/bin/cut -d, -f1)"
+      fi
+
+      driver_version="$(printf '%s\n' "$driver_package" | sed -n 's/^nvidia-driver-\([0-9][0-9]*\).*/\1/p')"
+      if [ -n "$driver_version" ]; then
+        if printf '%s\n' "$driver_package" | grep -q -- '-server'; then
+          utils_pkg="nvidia-utils-''${driver_version}-server"
+        else
+          utils_pkg="nvidia-utils-''${driver_version}"
+        fi
+        /usr/bin/sudo /usr/bin/apt-get install -y "$utils_pkg"
       fi
 
       echo "[4/4] Done. Reboot the VM, then run:"
@@ -265,6 +277,7 @@ in
     environment.etc."profile.d/ai-dev-vm.sh".text = ''
       export OLLAMA_HOST="http://127.0.0.1:11434"
       export OLLAMA_API_BASE="http://127.0.0.1:11434"
+      export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:$LD_LIBRARY_PATH"
     '';
 
     environment.etc."ai-dev-vm/compose.yaml".text = ''
@@ -309,8 +322,9 @@ in
       WorkingDirectory=/mnt/truenas/Personal/dev-ai
       Environment=HOME=/home/walter
       Environment=BROWSER=/bin/true
+      Environment=LD_LIBRARY_PATH=${pkgs.stdenv.cc.cc.lib}/lib
       EnvironmentFile=-/etc/default/opencode-web
-      ExecStart=/run/current-system/sw/bin/opencode web --hostname 0.0.0.0 --port 4090
+      ExecStart=/run/current-system/sw/bin/opencode web --hostname 0.0.0.0 --port 3000
       Restart=always
       RestartSec=5
 

@@ -1,0 +1,197 @@
+# dev-ai
+
+Ubuntu Server AI coding VM managed with Nix System Manager.
+
+## What this repo does
+
+This repository defines the machine-level setup for a local AI coding host:
+
+- Ubuntu stays the base OS.
+- Nix System Manager installs and configures the developer toolchain.
+- Docker runs Ollama with GPU access.
+- `opencode` is available for terminal-based coding.
+- `opencode web` is exposed for browser-based access.
+
+The main files are:
+
+- `flake.nix`: System Manager flake entrypoint.
+- `system.nix`: declarative machine configuration.
+- `opencode.json`: default OpenCode provider and model selection.
+- `plan.md`: architecture and setup plan for the VM.
+
+## Prerequisites
+
+The VM is expected to have:
+
+- Ubuntu Server
+- Nix installed in multi-user mode
+- NVIDIA driver installed and working
+- Docker and NVIDIA Container Toolkit installed
+- Access to `/mnt/truenas/models` for persistent Ollama model storage
+
+## Apply the configuration
+
+From the repository root:
+
+```bash
+nix run github:numtide/system-manager -- switch --flake . --sudo
+```
+
+This applies the declarative config, writes files into `/etc`, and updates the `opencode-web.service` unit.
+
+## Model storage
+
+Ollama model data is stored on the host at:
+
+```text
+/mnt/truenas/models
+```
+
+Inside the container, that path is mounted as:
+
+```text
+/root/.ollama/models
+```
+
+## Terminal workflow
+
+### 1. Start Ollama
+
+```bash
+ai-vm-up
+```
+
+Check that the container is running:
+
+```bash
+docker ps
+curl http://127.0.0.1:11434/api/tags
+```
+
+### 2. Pull models
+
+Small or medium models:
+
+```bash
+ai-vm-pull-model qwen2.5-coder:3b
+ai-vm-pull-model devstral
+```
+
+Larger coding models:
+
+```bash
+docker exec ollama ollama pull qwen3-coder:30b
+docker exec ollama ollama pull deepseek-coder:33b
+```
+
+### 3. Run OpenCode in a repo
+
+OpenCode should be run from the project you want to edit:
+
+```bash
+cd /path/to/your/project
+opencode
+```
+
+If you want a non-interactive run:
+
+```bash
+opencode run "inspect this repository and summarize the build and test workflow"
+```
+
+### 4. Useful terminal helpers
+
+```bash
+ai-vm-test-gpu
+ai-vm-down
+systemctl status opencode-web.service
+```
+
+## Browser workflow
+
+The browser UI is provided by `opencode web` through systemd.
+
+### 1. Make sure the service is running
+
+```bash
+systemctl status opencode-web.service
+curl -I http://127.0.0.1:3000
+```
+
+A healthy protected response is:
+
+```text
+HTTP/1.1 401 Unauthorized
+```
+
+### 2. Open it in your browser
+
+From another machine on the same network:
+
+```text
+http://192.168.1.37:3000
+```
+
+There is also a secondary address if needed:
+
+```text
+http://10.1.18.128:3000
+```
+
+### 3. Authenticate
+
+The UI uses the password stored in:
+
+```text
+/etc/default/opencode-web
+```
+
+Rotate it with:
+
+```bash
+ai-vm-set-opencode-password
+```
+
+Or set an explicit password:
+
+```bash
+ai-vm-set-opencode-password 'your-password-here'
+```
+
+### 4. Use OpenCode through the browser
+
+Once logged in, the browser UI uses the same local Ollama endpoint configured in `opencode.json`.
+
+Default model configuration currently points at:
+
+- primary model: `ollama/devstral:latest`
+- small model: `ollama/qwen2.5-coder:3b`
+
+## Operational checks
+
+### Verify GPU access
+
+```bash
+nvidia-smi
+ai-vm-test-gpu
+```
+
+### Verify Ollama health
+
+```bash
+docker logs ollama --tail=100
+curl http://127.0.0.1:11434/api/tags
+```
+
+### Verify browser service
+
+```bash
+systemctl status opencode-web.service
+curl -I http://127.0.0.1:3000
+```
+
+## Notes
+
+- `opencode web` is the browser entrypoint. OpenHands is not part of the active implementation.
+- Large model downloads can take a long time and should be expected to continue in the background.
+- If a model pull is interrupted, rerun the same `ollama pull` command; it will resume using the existing blobs in `/mnt/truenas/models`.

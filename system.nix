@@ -143,7 +143,7 @@ DOCKER_SOURCES
 
   aiVmUp = pkgs.writeShellApplication {
     name = "ai-up";
-    runtimeInputs = with pkgs; [ bash coreutils ];
+    runtimeInputs = [ aiVmPrewarmModels ] ++ (with pkgs; [ bash coreutils ]);
     text = ''
       set -euo pipefail
 
@@ -156,6 +156,37 @@ DOCKER_SOURCES
       }
 
       docker_cmd compose -f /etc/ai-dev-vm/compose.yaml "$@" up -d
+      nohup ai-prewarm-models >/tmp/ai-prewarm-models.log 2>&1 </dev/null &
+      echo "Started background model prewarm; log: /tmp/ai-prewarm-models.log"
+    '';
+  };
+
+
+  aiVmPrewarmModels = pkgs.writeShellApplication {
+    name = "ai-prewarm-models";
+    runtimeInputs = with pkgs; [ bash coreutils curl jq ];
+    text = ''
+      set -euo pipefail
+
+      ollama_url="''${OLLAMA_URL:-http://127.0.0.1:11434}"
+      primary_model="''${1:-qwen3-coder:30b}"
+      small_model="''${2:-qwen2.5-coder:3b}"
+
+      for _ in $(seq 1 60); do
+        if curl -fsS "$ollama_url/api/tags" >/dev/null 2>&1; then
+          break
+        fi
+        sleep 1
+      done
+
+      warm() {
+        model="$1"
+        payload="$(jq -nc --arg model "$model" '{model: $model, messages: [{role: "user", content: "hi"}], stream: false}')"
+        curl -fsS "$ollama_url/api/chat"           -H 'Content-Type: application/json'           -d "$payload"           >/dev/null || true
+      }
+
+      warm "$small_model"
+      warm "$primary_model"
     '';
   };
 
@@ -771,6 +802,7 @@ in
       aiVmTestGpu
       aiVmUp
       aiVmDown
+      aiVmPrewarmModels
       aiVmPullModel
       aiVmIndexProject
       aiVmSearchProject
@@ -840,7 +872,7 @@ in
             - /mnt/truenas/models:/root/.ollama/models
           environment:
             OLLAMA_MODELS: "/root/.ollama/models"
-            OLLAMA_CONTEXT_LENGTH: "64000"
+            OLLAMA_CONTEXT_LENGTH: "16384"
             OLLAMA_KEEP_ALIVE: "24h"
           deploy:
             resources:

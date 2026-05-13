@@ -167,7 +167,7 @@ Once logged in, the browser UI uses the same local Ollama endpoint configured in
 
 Default model configuration currently points at:
 
-- primary model: `ollama/devstral:latest`
+- primary model: `ollama/qwen3-coder:30b`
 - small model: `ollama/qwen2.5-coder:3b`
 
 

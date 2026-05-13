@@ -9,16 +9,16 @@
       },
       "models": {
         "qwen3-coder:30b": {
-          "name": "Qwen3 Coder 30B"
+          "name": "Qwen3 Coder 30B (verify tools before defaulting)"
         },
         "qwen2.5-coder:3b": {
-          "name": "Qwen2.5 Coder 3B"
+          "name": "Qwen2.5 Coder 3B (small tool-capable)"
         },
         "devstral:latest": {
-          "name": "Devstral"
+          "name": "Devstral (tool-capable default)"
         },
         "deepseek-coder:33b": {
-          "name": "DeepSeek Coder 33B"
+          "name": "DeepSeek Coder 33B (no tools in Ollama/OpenCode)"
         }
       }
     }

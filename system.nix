@@ -198,6 +198,390 @@ DOCKER_SOURCES
     '';
   };
 
+
+  aiVmIndexProject = pkgs.writeShellApplication {
+    name = "ai-vm-index-project";
+    runtimeInputs = with pkgs; [ bash coreutils curl git jq python312 ripgrep ];
+    text = ''
+      set -euo pipefail
+
+      repo="''${1:-.}"
+      qdrant_url="''${QDRANT_URL:-http://127.0.0.1:6333}"
+      ollama_url="''${OLLAMA_URL:-http://127.0.0.1:11434}"
+      embed_model="''${AI_VM_EMBED_MODEL:-}"
+
+      cd "$repo"
+
+      python3 - "$qdrant_url" "$ollama_url" "$embed_model" <<'PY_INDEX'
+import hashlib
+import json
+import math
+import os
+import re
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+import uuid
+from pathlib import Path
+
+QDRANT_URL, OLLAMA_URL, EMBED_MODEL = sys.argv[1:4]
+DIM = 384
+MAX_FILE_BYTES = 200_000
+CHUNK_CHARS = 4000
+OVERLAP_CHARS = 400
+TEXT_SUFFIXES = {
+    '.c', '.cc', '.cpp', '.cs', '.css', '.go', '.h', '.hpp', '.html', '.java', '.js', '.json',
+    '.jsx', '.kt', '.lua', '.md', '.mdx', '.nix', '.php', '.py', '.rb', '.rs', '.sh', '.sql',
+    '.svelte', '.toml', '.ts', '.tsx', '.txt', '.vue', '.yaml', '.yml', '.zig'
+}
+SKIP_PARTS = {
+    '.git', '.direnv', '.venv', 'venv', 'node_modules', 'dist', 'build', 'target', '.next',
+    '.turbo', '.cache', '__pycache__', 'coverage', '.pytest_cache'
+}
+SECRET_NAME_RE = re.compile(r'(^|[./_-])(\.env|env|secret|secrets|credential|credentials|token|tokens|key|keys)([./_-]|$)', re.I)
+
+
+def http(method, url, body=None):
+    data = None if body is None else json.dumps(body).encode()
+    req = urllib.request.Request(url, data=data, method=method, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        raw = resp.read().decode()
+        return json.loads(raw) if raw else None
+
+
+def collection_name(root):
+    try:
+        top = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
+    except Exception:
+        top = str(root.resolve())
+    base = re.sub(r'[^A-Za-z0-9_-]+', '-', Path(top).name).strip('-').lower() or "project"
+    digest = hashlib.sha1(top.encode()).hexdigest()[:10]
+    return f'project-{base}-{digest}'
+
+
+def list_files(root):
+    try:
+        files = subprocess.check_output(['git', 'ls-files'], text=True).splitlines()
+    except Exception:
+        files = [str(p.relative_to(root)) for p in root.rglob('*') if p.is_file()]
+    for rel in files:
+        path = root / rel
+        parts = set(path.parts)
+        if parts & SKIP_PARTS:
+            continue
+        if SECRET_NAME_RE.search(rel):
+            continue
+        if not path.is_file() or path.suffix.lower() not in TEXT_SUFFIXES:
+            continue
+        try:
+            if path.stat().st_size > MAX_FILE_BYTES:
+                continue
+        except OSError:
+            continue
+        yield rel, path
+
+
+def read_text(path):
+    raw = path.read_bytes()
+    if b'\0' in raw[:4096]:
+        return None
+    return raw.decode('utf-8', errors='replace')
+
+
+def chunks(text):
+    text = text.replace('\r\n', '\n')
+    start = 0
+    while start < len(text):
+        end = min(len(text), start + CHUNK_CHARS)
+        yield text[start:end]
+        if end == len(text):
+            break
+        start = max(0, end - OVERLAP_CHARS)
+
+
+def hash_vector(text):
+    vec = [0.0] * DIM
+    tokens = re.findall(r'[A-Za-z_][A-Za-z0-9_]{1,}|\d+', text.lower())
+    if not tokens:
+        tokens = [text[:64] or 'empty']
+    for token in tokens:
+        h = hashlib.blake2b(token.encode(), digest_size=8).digest()
+        idx = int.from_bytes(h[:4], 'little') % DIM
+        sign = 1.0 if h[4] & 1 else -1.0
+        vec[idx] += sign
+    norm = math.sqrt(sum(x * x for x in vec)) or 1.0
+    return [x / norm for x in vec]
+
+
+def ollama_vector(text):
+    if not EMBED_MODEL:
+        return None
+    body = {"model": EMBED_MODEL, "input": text}
+    try:
+        result = http("POST", f'{OLLAMA_URL}/api/embed', body)
+        embeddings = result.get("embeddings") or []
+        if not embeddings:
+            return None
+        vec = embeddings[0]
+        if len(vec) == DIM:
+            return vec
+    except Exception:
+        return None
+    return None
+
+
+def vector(text):
+    return ollama_vector(text) or hash_vector(text)
+
+
+def ensure_collection(name):
+    try:
+        http('PUT', f'{QDRANT_URL}/collections/{name}', {'vectors': {'size': DIM, 'distance': 'Cosine'}})
+    except urllib.error.HTTPError as exc:
+        if exc.code != 409:
+            raise
+
+
+def delete_existing_repo_points(name, repo):
+    http('POST', f'{QDRANT_URL}/collections/{name}/points/delete?wait=true', {
+        'filter': {'must': [{'key': 'repo', 'match': {'value': repo}}]}
+    })
+
+
+root = Path.cwd()
+name = collection_name(root)
+ensure_collection(name)
+delete_existing_repo_points(name, str(root))
+points = []
+files = 0
+chunk_count = 0
+for rel, path in list_files(root):
+    content = read_text(path)
+    if not content:
+        continue
+    files += 1
+    file_sha = hashlib.sha256(content.encode('utf-8', errors='replace')).hexdigest()
+    for idx, chunk in enumerate(chunks(content)):
+        point_id = str(uuid.UUID(hashlib.md5(f'{root}:{rel}:{idx}:{file_sha}'.encode()).hexdigest()))
+        points.append({
+            'id': point_id,
+            "vector": vector(f'{rel}\n\n{chunk}'),
+            'payload': {
+                'repo': str(root),
+                'path': rel,
+                'chunk': idx,
+                'sha256': file_sha,
+                'text': chunk,
+            },
+        })
+        chunk_count += 1
+        if len(points) >= 64:
+            http('PUT', f'{QDRANT_URL}/collections/{name}/points?wait=true', {'points': points})
+            points = []
+if points:
+    http('PUT', f'{QDRANT_URL}/collections/{name}/points?wait=true', {'points': points})
+print(json.dumps({'collection': name, 'repo': str(root), 'files_indexed': files, 'chunks_indexed': chunk_count}, indent=2))
+PY_INDEX
+    '';
+  };
+
+  aiVmSearchProject = pkgs.writeShellApplication {
+    name = "ai-vm-search-project";
+    runtimeInputs = with pkgs; [ bash coreutils curl git jq python312 ];
+    text = ''
+      set -euo pipefail
+
+      if [ "$#" -lt 1 ]; then
+        echo "usage: ai-vm-search-project <query> [repo]" >&2
+        exit 2
+      fi
+
+      query="$1"
+      repo="''${2:-.}"
+      qdrant_url="''${QDRANT_URL:-http://127.0.0.1:6333}"
+      ollama_url="''${OLLAMA_URL:-http://127.0.0.1:11434}"
+      embed_model="''${AI_VM_EMBED_MODEL:-}"
+
+      cd "$repo"
+
+      python3 - "$qdrant_url" "$ollama_url" "$embed_model" "$query" <<'PY_SEARCH'
+import hashlib
+import json
+import math
+import re
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+
+QDRANT_URL, OLLAMA_URL, EMBED_MODEL, QUERY = sys.argv[1:5]
+DIM = 384
+
+
+def http(method, url, body=None):
+    data = None if body is None else json.dumps(body).encode()
+    req = urllib.request.Request(url, data=data, method=method, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        raw = resp.read().decode()
+        return json.loads(raw) if raw else None
+
+
+def collection_name(root):
+    try:
+        top = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
+    except Exception:
+        top = str(root.resolve())
+    base = re.sub(r'[^A-Za-z0-9_-]+', '-', Path(top).name).strip('-').lower() or "project"
+    digest = hashlib.sha1(top.encode()).hexdigest()[:10]
+    return f'project-{base}-{digest}'
+
+
+def hash_vector(text):
+    vec = [0.0] * DIM
+    tokens = re.findall(r'[A-Za-z_][A-Za-z0-9_]{1,}|\d+', text.lower()) or [text[:64] or 'empty']
+    for token in tokens:
+        h = hashlib.blake2b(token.encode(), digest_size=8).digest()
+        idx = int.from_bytes(h[:4], 'little') % DIM
+        sign = 1.0 if h[4] & 1 else -1.0
+        vec[idx] += sign
+    norm = math.sqrt(sum(x * x for x in vec)) or 1.0
+    return [x / norm for x in vec]
+
+
+def ollama_vector(text):
+    if not EMBED_MODEL:
+        return None
+    try:
+        result = http("POST", f'{OLLAMA_URL}/api/embed', {"model": EMBED_MODEL, "input": text})
+        embeddings = result.get("embeddings") or []
+        if embeddings and len(embeddings[0]) == DIM:
+            return embeddings[0]
+    except Exception:
+        return None
+    return None
+
+root = Path.cwd()
+name = collection_name(root)
+vec = ollama_vector(QUERY) or hash_vector(QUERY)
+result = http("POST", f'{QDRANT_URL}/collections/{name}/points/search', {
+    "vector": vec,
+    "limit": 8,
+    "with_payload": True,
+})
+for item in result.get("result", []):
+    payload = item.get("payload") or {}
+    text = (payload.get("text") or "").replace("\n", " ")
+    if len(text) > 240:
+        text = text[:237] + "..."
+    print(f'{item.get("score", 0):.4f}\t{payload.get("path")}#chunk-{payload.get("chunk")}\t{text}')
+PY_SEARCH
+    '';
+  };
+
+
+  aiVmAgent = pkgs.writeShellApplication {
+    name = "ai-vm-agent";
+    runtimeInputs = with pkgs; [ bash coreutils findutils git gnused opencode ];
+    text = ''
+      set -euo pipefail
+
+      usage() {
+        cat >&2 <<'USAGE'
+usage:
+  ai-vm-agent review <repo-path>
+  ai-vm-agent worker <repo-path> <branch-name> <prompt-file>
+  ai-vm-agent status <repo-path>
+USAGE
+      }
+
+      if [ "$#" -lt 1 ]; then
+        usage
+        exit 2
+      fi
+
+      cmd="$1"
+      shift
+
+      sanitize() {
+        printf '%s' "$1" | sed 's#[^A-Za-z0-9._-]#-#g'
+      }
+
+      repo_root() {
+        git -C "$1" rev-parse --show-toplevel
+      }
+
+      logs_dir() {
+        root="$1"
+        mkdir -p "$root/.ai-vm-agent/logs"
+        printf '%s\n' "$root/.ai-vm-agent/logs"
+      }
+
+      case "$cmd" in
+        review)
+          if [ "$#" -ne 1 ]; then usage; exit 2; fi
+          root="$(repo_root "$1")"
+          parent="$(dirname "$root")"
+          base="$(basename "$root")"
+          stamp="$(date +%Y%m%d-%H%M%S)"
+          branch="ai/review-$stamp"
+          worktree="$parent/$base-review-$stamp"
+          log_dir="$(logs_dir "$root")"
+          log_file="$log_dir/review-$stamp.log"
+
+          git -C "$root" worktree add -b "$branch" "$worktree" HEAD
+          prompt="Review this branch for correctness bugs, missing tests, security risks, and behavior changes. Do not modify files. Report findings with file paths and line references when possible."
+          printf 'worktree=%s\nbranch=%s\nlog=%s\n' "$worktree" "$branch" "$log_file"
+          (cd "$worktree" && opencode run "$prompt") 2>&1 | tee "$log_file"
+          ;;
+
+        worker)
+          if [ "$#" -ne 3 ]; then usage; exit 2; fi
+          root="$(repo_root "$1")"
+          branch="$2"
+          prompt_file="$3"
+          if [ ! -f "$prompt_file" ]; then
+            echo "prompt file not found: $prompt_file" >&2
+            exit 1
+          fi
+          parent="$(dirname "$root")"
+          base="$(basename "$root")"
+          safe_branch="$(sanitize "$branch")"
+          worktree="$parent/$base-worker-$safe_branch"
+          log_dir="$(logs_dir "$root")"
+          log_file="$log_dir/worker-$safe_branch.log"
+
+          git -C "$root" worktree add -b "$branch" "$worktree" HEAD
+          prompt="$(cat "$prompt_file")"
+          prompt="$prompt
+
+You are a bounded sidecar worker. Work only on the scope described above. Do not touch unrelated files. Run relevant tests and summarize changed files."
+          printf 'worktree=%s\nbranch=%s\nlog=%s\n' "$worktree" "$branch" "$log_file"
+          (cd "$worktree" && opencode run "$prompt") 2>&1 | tee "$log_file"
+          ;;
+
+        status)
+          if [ "$#" -ne 1 ]; then usage; exit 2; fi
+          root="$(repo_root "$1")"
+          echo "worktrees:"
+          git -C "$root" worktree list
+          echo
+          echo "logs:"
+          if [ -d "$root/.ai-vm-agent/logs" ]; then
+            find "$root/.ai-vm-agent/logs" -maxdepth 1 -type f -printf '%TY-%Tm-%Td %TH:%TM %p\n' | sort
+          else
+            echo "none"
+          fi
+          ;;
+
+        *)
+          usage
+          exit 2
+          ;;
+      esac
+    '';
+  };
+
   aiVmSetOpencodePassword = pkgs.writeShellApplication {
     name = "ai-vm-set-opencode-password";
     runtimeInputs = with pkgs; [ bash coreutils openssl ];
@@ -230,6 +614,9 @@ in
       aiVmUp
       aiVmDown
       aiVmPullModel
+      aiVmIndexProject
+      aiVmSearchProject
+      aiVmAgent
       aiVmSetOpencodePassword
     ] ++ (with pkgs; [
       git

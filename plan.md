@@ -852,14 +852,14 @@ Use it for:
 - Searchable notes about test commands, release steps, and subsystem ownership.
 - Retrieved context for sidecar agents that do not need the whole repository loaded.
 
-A later implementation pass should add a small `ai-vm-index-project` script that:
+The current implementation includes `ai-vm-index-project` and `ai-vm-search-project`:
 
 ```bash
-cd ~/src/<your-repo>
-ai-vm-index-project
+ai-vm-index-project ~/src/<your-repo>
+ai-vm-search-project "release process" ~/src/<your-repo>
 ```
 
-That script should chunk selected docs and summaries, embed them with a local embedding model, and upsert them into a Qdrant collection named after the repository. Do not index secrets, `.env` files, build artifacts, or dependency directories.
+The helper chunks selected text files, skips secrets, `.env` files, build artifacts, and dependency directories, then upserts them into a Qdrant collection named after the repository. It works by default with a deterministic local hash vector so indexing is always available. If `AI_VM_EMBED_MODEL` is set, it asks Ollama for embeddings and uses them when the model returns the expected 384-dimensional vector. Qdrant data is persisted at `/mnt/truenas/qdrant`.
 
 ---
 
@@ -892,13 +892,15 @@ opencode run "only edit files under src/auth. Add tests for the token refresh bu
 
 The main session should inspect sidecar diffs before merging anything back. Avoid several agents writing to the same working tree.
 
-A later implementation pass should add an `ai-vm-agent` wrapper with subcommands like:
+The current implementation includes an `ai-vm-agent` wrapper:
 
 ```bash
+ai-vm-agent status <repo-path>
 ai-vm-agent review <repo-path>
 ai-vm-agent worker <repo-path> <branch-name> <prompt-file>
-ai-vm-agent status
 ```
+
+`review` creates a timestamped read-only review worktree and runs `opencode run` there. `worker` creates a named implementation worktree and appends a bounded-scope instruction to the supplied prompt file. `status` lists worktrees and sidecar logs. Logs are stored under `.ai-vm-agent/logs` in the source repository.
 
 ---
 
@@ -1248,8 +1250,12 @@ git switch -c ai/some-task
 # Primary terminal agent
 opencode
 
+# Index/search project memory when useful
+ai-vm-index-project .
+ai-vm-search-project "test workflow" .
+
 # One-shot sidecar review in another worktree
-opencode run "review this branch for correctness bugs and missing tests; do not modify files"
+ai-vm-agent review .
 
 # Controlled diff-based editing when useful
 aider --model ollama_chat/devstral

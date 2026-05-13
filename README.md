@@ -11,6 +11,8 @@ This repository defines the machine-level setup for a local AI coding host:
 - Docker runs Ollama with GPU access.
 - `opencode` is available for terminal-based coding.
 - `opencode web` is exposed for browser-based access.
+- Qdrant provides local project-memory search.
+- `ai-vm-agent` creates isolated sidecar worktrees for review and bounded worker tasks.
 
 The main files are:
 
@@ -28,6 +30,7 @@ The VM is expected to have:
 - NVIDIA driver installed and working
 - Docker and NVIDIA Container Toolkit installed
 - Access to `/mnt/truenas/models` for persistent Ollama model storage
+- Access to `/mnt/truenas/qdrant` for persistent Qdrant storage
 
 ## Apply the configuration
 
@@ -167,6 +170,61 @@ Default model configuration currently points at:
 - primary model: `ollama/devstral:latest`
 - small model: `ollama/qwen2.5-coder:3b`
 
+
+## Project memory
+
+Qdrant runs locally on the VM and stores data under:
+
+```text
+/mnt/truenas/qdrant
+```
+
+Index a repository into Qdrant:
+
+```bash
+ai-vm-index-project /path/to/your/project
+```
+
+Search indexed project context:
+
+```bash
+ai-vm-search-project "opencode browser service" /path/to/your/project
+```
+
+By default, indexing uses a deterministic local hash vector so it works without any additional model. To use an Ollama embedding model, set `AI_VM_EMBED_MODEL` before indexing and searching; the current helper expects a 384-dimensional embedding vector.
+
+Useful checks:
+
+```bash
+curl http://127.0.0.1:6333/healthz
+curl http://127.0.0.1:6333/collections
+```
+
+## Sidecar agents
+
+The main OpenCode session should own the coding loop. Use sidecar agents only for bounded review, investigation, verification, or isolated implementation tasks. The wrapper creates separate git worktrees next to the target repository and writes logs under `.ai-vm-agent/logs` in the source repository.
+
+Check active worktrees and sidecar logs:
+
+```bash
+ai-vm-agent status /path/to/your/project
+```
+
+Run a read-only review sidecar:
+
+```bash
+ai-vm-agent review /path/to/your/project
+```
+
+Run a bounded worker from a prompt file:
+
+```bash
+printf 'Only edit src/auth. Fix token refresh and add tests.' > /tmp/worker-prompt.txt
+ai-vm-agent worker /path/to/your/project ai/fix-token-refresh /tmp/worker-prompt.txt
+```
+
+Inspect sidecar diffs from the main worktree before merging or cherry-picking anything back.
+
 ## Operational checks
 
 ### Verify GPU access
@@ -183,6 +241,13 @@ docker logs ollama --tail=100
 curl http://127.0.0.1:11434/api/tags
 ```
 
+### Verify Qdrant health
+
+```bash
+curl http://127.0.0.1:6333/healthz
+curl http://127.0.0.1:6333/collections
+```
+
 ### Verify browser service
 
 ```bash
@@ -193,5 +258,6 @@ curl -I http://127.0.0.1:3000
 ## Notes
 
 - `opencode web` is the browser entrypoint. OpenHands is not part of the active implementation.
+- Qdrant is for project memory and retrieved notes only; source files, tests, and Git history remain authoritative.
 - Large model downloads can take a long time and should be expected to continue in the background.
 - If a model pull is interrupted, rerun the same `ollama pull` command; it will resume using the existing blobs in `/mnt/truenas/models`.

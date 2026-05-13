@@ -16,6 +16,9 @@
         },
         "devstral:latest": {
           "name": "Devstral"
+        },
+        "deepseek-coder:33b": {
+          "name": "DeepSeek Coder 33B"
         }
       }
     }

@@ -303,6 +303,16 @@ in
                   - driver: nvidia
                     count: all
                     capabilities: [gpu]
+
+        qdrant:
+          image: qdrant/qdrant:latest
+          container_name: qdrant
+          restart: unless-stopped
+          ports:
+            - "127.0.0.1:6333:6333"
+            - "127.0.0.1:6334:6334"
+          volumes:
+            - /var/lib/ai-dev-vm/qdrant:/qdrant/storage
     '';
 
     environment.etc."ai-dev-vm/opencode-web.env.example".text = ''

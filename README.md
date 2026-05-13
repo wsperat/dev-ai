@@ -12,7 +12,7 @@ This repository defines the machine-level setup for a local AI coding host:
 - `opencode` is available for terminal-based coding.
 - `opencode web` is exposed for browser-based access.
 - Qdrant provides local project-memory search.
-- `ai-vm-agent` creates isolated sidecar worktrees for review and bounded worker tasks.
+- `ai-agent` creates isolated sidecar worktrees for review and bounded worker tasks.
 
 The main files are:
 
@@ -61,7 +61,7 @@ Inside the container, that path is mounted as:
 ### 1. Start Ollama
 
 ```bash
-ai-vm-up
+ai-up
 ```
 
 Check that the container is running:
@@ -76,8 +76,8 @@ curl http://127.0.0.1:11434/api/tags
 Small or medium models:
 
 ```bash
-ai-vm-pull-model qwen2.5-coder:3b
-ai-vm-pull-model devstral
+ai-pull-model qwen2.5-coder:3b
+ai-pull-model devstral
 ```
 
 Larger coding models:
@@ -105,8 +105,8 @@ opencode run "inspect this repository and summarize the build and test workflow"
 ### 4. Useful terminal helpers
 
 ```bash
-ai-vm-test-gpu
-ai-vm-down
+ai-test-gpu
+ai-down
 systemctl status opencode-web.service
 ```
 
@@ -152,13 +152,13 @@ The UI uses the password stored in:
 Rotate it with:
 
 ```bash
-ai-vm-set-opencode-password
+ai-set-opencode-password
 ```
 
 Or set an explicit password:
 
 ```bash
-ai-vm-set-opencode-password 'your-password-here'
+ai-set-opencode-password 'your-password-here'
 ```
 
 ### 4. Use OpenCode through the browser
@@ -182,13 +182,13 @@ Qdrant runs locally on the VM and stores data under:
 Index a repository into Qdrant:
 
 ```bash
-ai-vm-index-project /path/to/your/project
+ai-index-project /path/to/your/project
 ```
 
 Search indexed project context:
 
 ```bash
-ai-vm-search-project "opencode browser service" /path/to/your/project
+ai-search-project "opencode browser service" /path/to/your/project
 ```
 
 By default, indexing uses a deterministic local hash vector so it works without any additional model. To use an Ollama embedding model, set `AI_VM_EMBED_MODEL` before indexing and searching; the current helper expects a 384-dimensional embedding vector.
@@ -202,25 +202,25 @@ curl http://127.0.0.1:6333/collections
 
 ## Sidecar agents
 
-The main OpenCode session should own the coding loop. Use sidecar agents only for bounded review, investigation, verification, or isolated implementation tasks. The wrappers create separate git worktrees next to the target repository and write logs and orchestration state under `.ai-vm-agent/`, which is ignored by Git.
+The main OpenCode session should own the coding loop. Use sidecar agents only for bounded review, investigation, verification, or isolated implementation tasks. The wrappers create separate git worktrees next to the target repository and write logs and orchestration state under `.ai-agent/`, which is ignored by Git.
 
 Manual sidecar helper commands:
 
 ```bash
-ai-vm-agent status /path/to/your/project
-ai-vm-agent review /path/to/your/project
+ai-agent status /path/to/your/project
+ai-agent review /path/to/your/project
 printf 'Only edit src/auth. Fix token refresh and add tests.' > /tmp/worker-prompt.txt
-ai-vm-agent worker /path/to/your/project ai/fix-token-refresh /tmp/worker-prompt.txt
+ai-agent worker /path/to/your/project ai/fix-token-refresh /tmp/worker-prompt.txt
 ```
 
 Orchestrator commands:
 
 ```bash
-ai-vm-orchestrator prepare /path/to/your/project "auth test workflow"
-ai-vm-orchestrator review /path/to/your/project
-ai-vm-orchestrator worker /path/to/your/project ai/fix-token-refresh /tmp/worker-prompt.txt
-ai-vm-orchestrator gate /path/to/your/project
-ai-vm-orchestrator status /path/to/your/project
+ai-orchestrator prepare /path/to/your/project "auth test workflow"
+ai-orchestrator review /path/to/your/project
+ai-orchestrator worker /path/to/your/project ai/fix-token-refresh /tmp/worker-prompt.txt
+ai-orchestrator gate /path/to/your/project
+ai-orchestrator status /path/to/your/project
 ```
 
 `prepare` refreshes the Qdrant index, retrieves project context, records git status, and includes `AGENTS.md` when present. `worker` and `review` prepend that retrieved context before delegating to sidecars. `gate` summarizes sidecar worktrees and recent logs so the main session can inspect work before merging or cherry-picking anything back.
@@ -231,7 +231,7 @@ ai-vm-orchestrator status /path/to/your/project
 
 ```bash
 nvidia-smi
-ai-vm-test-gpu
+ai-test-gpu
 ```
 
 ### Verify Ollama health

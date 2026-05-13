@@ -317,7 +317,7 @@ cat > system.nix <<'EOF'
 
 let
   aiVmInstallDrivers = pkgs.writeShellApplication {
-    name = "ai-vm-install-drivers";
+    name = "ai-install-drivers";
     runtimeInputs = with pkgs; [ bash coreutils curl gnugrep gnused ];
     text = ''
       set -euo pipefail
@@ -336,7 +336,7 @@ let
 
       echo "[3/4] Installing NVIDIA GPGPU driver..."
       echo "      To pin a branch, run for example:"
-      echo "      NVIDIA_DRIVER_SPEC=nvidia:535-server ai-vm-install-drivers"
+      echo "      NVIDIA_DRIVER_SPEC=nvidia:535-server ai-install-drivers"
       driver_spec="''${NVIDIA_DRIVER_SPEC:-}"
 
       if [ -n "$driver_spec" ]; then
@@ -351,7 +351,7 @@ let
   };
 
   aiVmInstallDockerGpu = pkgs.writeShellApplication {
-    name = "ai-vm-install-docker-gpu";
+    name = "ai-install-docker-gpu";
     runtimeInputs = with pkgs; [ bash coreutils curl gnupg gnused ];
     text = ''
       set -euo pipefail
@@ -421,12 +421,12 @@ DOCKER_SOURCES
       /usr/bin/sudo /usr/sbin/usermod -aG docker "$current_user" || true
 
       echo "Done. Log out and back in for docker group membership, or use sudo for Docker."
-      echo "Then run: ai-vm-test-gpu"
+      echo "Then run: ai-test-gpu"
     '';
   };
 
   aiVmTestGpu = pkgs.writeShellApplication {
-    name = "ai-vm-test-gpu";
+    name = "ai-test-gpu";
     runtimeInputs = with pkgs; [ bash coreutils ];
     text = ''
       set -euo pipefail
@@ -444,7 +444,7 @@ DOCKER_SOURCES
   };
 
   aiVmUp = pkgs.writeShellApplication {
-    name = "ai-vm-up";
+    name = "ai-up";
     runtimeInputs = with pkgs; [ bash coreutils ];
     text = ''
       set -euo pipefail
@@ -462,7 +462,7 @@ DOCKER_SOURCES
   };
 
   aiVmDown = pkgs.writeShellApplication {
-    name = "ai-vm-down";
+    name = "ai-down";
     runtimeInputs = with pkgs; [ bash coreutils ];
     text = ''
       set -euo pipefail
@@ -480,7 +480,7 @@ DOCKER_SOURCES
   };
 
   aiVmPullModel = pkgs.writeShellApplication {
-    name = "ai-vm-pull-model";
+    name = "ai-pull-model";
     runtimeInputs = with pkgs; [ bash coreutils ];
     text = ''
       set -euo pipefail
@@ -669,7 +669,7 @@ git commit -m "Initial AI dev VM system-manager config"
 Run the Nix-managed driver script:
 
 ```bash
-ai-vm-install-drivers
+ai-install-drivers
 ```
 
 For a pinned Ubuntu server driver branch, first inspect available branches:
@@ -681,7 +681,7 @@ sudo ubuntu-drivers list --gpgpu
 Then run, for example:
 
 ```bash
-NVIDIA_DRIVER_SPEC=nvidia:535-server ai-vm-install-drivers
+NVIDIA_DRIVER_SPEC=nvidia:535-server ai-install-drivers
 ```
 
 Reboot:
@@ -706,7 +706,7 @@ Ubuntu documents both automatic GPGPU/server driver installation and pinning a s
 Run:
 
 ```bash
-ai-vm-install-docker-gpu
+ai-install-docker-gpu
 ```
 
 Log out and back in, or keep using `sudo docker`.
@@ -714,7 +714,7 @@ Log out and back in, or keep using `sudo docker`.
 Test GPU access from both Ubuntu and Docker:
 
 ```bash
-ai-vm-test-gpu
+ai-test-gpu
 ```
 
 Docker’s Ubuntu docs recommend setting up Docker’s APT repository and installing `docker-ce`, `docker-ce-cli`, `containerd.io`, Buildx, and the Compose plugin; NVIDIA documents adding the container-toolkit repository and configuring Docker with `nvidia-ctk runtime configure --runtime=docker`; Docker Compose supports GPU reservations with `driver: nvidia` and `capabilities: [gpu]`. ([Docker Documentation][4])
@@ -726,7 +726,7 @@ Docker’s Ubuntu docs recommend setting up Docker’s APT repository and instal
 Start the Nix-generated Compose stack:
 
 ```bash
-ai-vm-up
+ai-up
 ```
 
 Check:
@@ -739,7 +739,7 @@ docker logs ollama --tail=100
 Pull a first model:
 
 ```bash
-ai-vm-pull-model devstral
+ai-pull-model devstral
 ```
 
 Run it:
@@ -753,7 +753,7 @@ Ollama’s Docker docs show running the container with NVIDIA GPU support after 
 For agentic coding, start with:
 
 ```bash
-ai-vm-pull-model devstral
+ai-pull-model devstral
 ```
 
 Devstral is specifically described as an agentic software-engineering model with a 128k context window and 24B parameters, light enough for local deployment on hardware such as a single RTX 4090 or a 32 GB RAM Mac. ([Ollama][8])
@@ -761,8 +761,8 @@ Devstral is specifically described as an agentic software-engineering model with
 Other useful Ollama model choices:
 
 ```bash
-ai-vm-pull-model qwen3-coder:30b
-ai-vm-pull-model deepseek-coder-v2:16b
+ai-pull-model qwen3-coder:30b
+ai-pull-model deepseek-coder-v2:16b
 ```
 
 Use the biggest model that fits your GPU at the context size you need. Ollama’s current context docs recommend at least about 64k tokens for agents/coding tools and warn that larger context increases memory use. ([Ollama][9])
@@ -852,11 +852,11 @@ Use it for:
 - Searchable notes about test commands, release steps, and subsystem ownership.
 - Retrieved context for sidecar agents that do not need the whole repository loaded.
 
-The current implementation includes `ai-vm-index-project` and `ai-vm-search-project`:
+The current implementation includes `ai-index-project` and `ai-search-project`:
 
 ```bash
-ai-vm-index-project ~/src/<your-repo>
-ai-vm-search-project "release process" ~/src/<your-repo>
+ai-index-project ~/src/<your-repo>
+ai-search-project "release process" ~/src/<your-repo>
 ```
 
 The helper chunks selected text files, skips secrets, `.env` files, build artifacts, and dependency directories, then upserts them into a Qdrant collection named after the repository. It works by default with a deterministic local hash vector so indexing is always available. If `AI_VM_EMBED_MODEL` is set, it asks Ollama for embeddings and uses them when the model returns the expected 384-dimensional vector. Qdrant data is persisted at `/mnt/truenas/qdrant`.
@@ -892,24 +892,24 @@ opencode run "only edit files under src/auth. Add tests for the token refresh bu
 
 The main session should inspect sidecar diffs before merging anything back. Avoid several agents writing to the same working tree.
 
-The current implementation includes an `ai-vm-agent` wrapper:
+The current implementation includes an `ai-agent` wrapper:
 
 ```bash
-ai-vm-agent status <repo-path>
-ai-vm-agent review <repo-path>
-ai-vm-agent worker <repo-path> <branch-name> <prompt-file>
+ai-agent status <repo-path>
+ai-agent review <repo-path>
+ai-agent worker <repo-path> <branch-name> <prompt-file>
 ```
 
-`review` creates a timestamped read-only review worktree and runs `opencode run` there. `worker` creates a named implementation worktree and appends a bounded-scope instruction to the supplied prompt file. `status` lists worktrees and sidecar logs. Logs are stored under `.ai-vm-agent/logs` in the source repository.
+`review` creates a timestamped read-only review worktree and runs `opencode run` there. `worker` creates a named implementation worktree and appends a bounded-scope instruction to the supplied prompt file. `status` lists worktrees and sidecar logs. Logs are stored under `.ai-agent/logs` in the source repository.
 
-The current implementation also starts the orchestration layer with `ai-vm-orchestrator`:
+The current implementation also starts the orchestration layer with `ai-orchestrator`:
 
 ```bash
-ai-vm-orchestrator prepare <repo-path> [query]
-ai-vm-orchestrator review <repo-path> [query]
-ai-vm-orchestrator worker <repo-path> <branch-name> <prompt-file> [query]
-ai-vm-orchestrator gate <repo-path>
-ai-vm-orchestrator status <repo-path>
+ai-orchestrator prepare <repo-path> [query]
+ai-orchestrator review <repo-path> [query]
+ai-orchestrator worker <repo-path> <branch-name> <prompt-file> [query]
+ai-orchestrator gate <repo-path>
+ai-orchestrator status <repo-path>
 ```
 
 `prepare` indexes the repo, retrieves Qdrant context, records git status, and includes `AGENTS.md` when present. `review` and `worker` pass that context to sidecars. `gate` reports sidecar worktree status, diff stats, and recent logs so the main session can inspect work before merging.
@@ -926,7 +926,7 @@ The current implementation has the building blocks, but it is not yet a full Cla
 - Task registry: track active sidecars, ownership scopes, branches, prompts, logs, and completion state in a machine-readable file.
 - Policy enforcement: prevent sidecars from editing outside their assigned ownership scope, and flag dirty source worktrees before spawning new workers.
 
-The implementation should move toward this in small steps. First add an `ai-vm-orchestrator` wrapper that prepares Qdrant-backed context, delegates to `ai-vm-agent`, and provides a `gate` command for reviewing sidecar worktrees and logs. Later passes can add automatic task planning, memory writes, and stricter policy enforcement.
+The implementation should move toward this in small steps. First add an `ai-orchestrator` wrapper that prepares Qdrant-backed context, delegates to `ai-agent`, and provides a `gate` command for reviewing sidecar worktrees and logs. Later passes can add automatic task planning, memory writes, and stricter policy enforcement.
 
 ---
 
@@ -1007,7 +1007,7 @@ http://192.168.1.37:3000
 A healthy protected response is `401 Unauthorized` when no credentials are sent. Rotate the password with:
 
 ```bash
-ai-vm-set-opencode-password
+ai-set-opencode-password
 ```
 
 This keeps the browser path aligned with the same local Ollama-backed OpenCode setup without introducing a separate privileged UI container.
@@ -1137,8 +1137,8 @@ Apply again:
 ```bash
 cd ~/ai-dev-vm
 nix run 'github:numtide/system-manager' -- switch --sudo
-ai-vm-down
-ai-vm-up
+ai-down
+ai-up
 git add system.nix flake.lock
 git commit -m "Pin AI service container images"
 ```
@@ -1185,8 +1185,8 @@ sudo reboot
 Update or add models:
 
 ```bash
-ai-vm-pull-model devstral
-ai-vm-pull-model qwen3-coder:30b
+ai-pull-model devstral
+ai-pull-model qwen3-coder:30b
 docker exec -it ollama ollama list
 ```
 
@@ -1219,7 +1219,7 @@ Run:
 ```bash
 sudo nvidia-ctk runtime configure --runtime=docker
 sudo systemctl restart docker
-ai-vm-test-gpu
+ai-test-gpu
 ```
 
 The Docker test uses NVIDIA’s CUDA image pattern from Docker’s Compose GPU docs. ([Docker Documentation][14])
@@ -1264,10 +1264,10 @@ If you bind `opencode web` beyond localhost, set `OPENCODE_SERVER_PASSWORD` and 
 
 ```bash
 # Start services
-ai-vm-up
+ai-up
 
 # Pull/update your agentic model
-ai-vm-pull-model devstral
+ai-pull-model devstral
 
 # Work in a repo
 cd ~/src/<repo>
@@ -1277,11 +1277,11 @@ git switch -c ai/some-task
 opencode
 
 # Index/search project memory when useful
-ai-vm-index-project .
-ai-vm-search-project "test workflow" .
+ai-index-project .
+ai-search-project "test workflow" .
 
 # One-shot sidecar review in another worktree
-ai-vm-agent review .
+ai-agent review .
 
 # Controlled diff-based editing when useful
 aider --model ollama_chat/devstral

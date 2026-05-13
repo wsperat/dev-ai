@@ -2,7 +2,7 @@
 
 let
   aiVmInstallDrivers = pkgs.writeShellApplication {
-    name = "ai-vm-install-drivers";
+    name = "ai-install-drivers";
     runtimeInputs = with pkgs; [ bash coreutils curl gnugrep gnused ];
     text = ''
       set -euo pipefail
@@ -21,7 +21,7 @@ let
 
       echo "[3/4] Installing NVIDIA GPGPU driver..."
       echo "      To pin a branch, run for example:"
-      echo "      NVIDIA_DRIVER_SPEC=nvidia:535-server ai-vm-install-drivers"
+      echo "      NVIDIA_DRIVER_SPEC=nvidia:535-server ai-install-drivers"
       driver_spec="''${NVIDIA_DRIVER_SPEC:-}"
 
       if [ -n "$driver_spec" ]; then
@@ -48,7 +48,7 @@ let
   };
 
   aiVmInstallDockerGpu = pkgs.writeShellApplication {
-    name = "ai-vm-install-docker-gpu";
+    name = "ai-install-docker-gpu";
     runtimeInputs = with pkgs; [ bash coreutils curl gnupg gnused ];
     text = ''
       set -euo pipefail
@@ -119,12 +119,12 @@ DOCKER_SOURCES
       /usr/bin/sudo /usr/sbin/usermod -aG docker "$current_user" || true
 
       echo "Done. Log out and back in for docker group membership, or use sudo for Docker."
-      echo "Then run: ai-vm-test-gpu"
+      echo "Then run: ai-test-gpu"
     '';
   };
 
   aiVmTestGpu = pkgs.writeShellApplication {
-    name = "ai-vm-test-gpu";
+    name = "ai-test-gpu";
     runtimeInputs = with pkgs; [ bash coreutils ];
     text = ''
       set -euo pipefail
@@ -142,7 +142,7 @@ DOCKER_SOURCES
   };
 
   aiVmUp = pkgs.writeShellApplication {
-    name = "ai-vm-up";
+    name = "ai-up";
     runtimeInputs = with pkgs; [ bash coreutils ];
     text = ''
       set -euo pipefail
@@ -160,7 +160,7 @@ DOCKER_SOURCES
   };
 
   aiVmDown = pkgs.writeShellApplication {
-    name = "ai-vm-down";
+    name = "ai-down";
     runtimeInputs = with pkgs; [ bash coreutils ];
     text = ''
       set -euo pipefail
@@ -178,7 +178,7 @@ DOCKER_SOURCES
   };
 
   aiVmPullModel = pkgs.writeShellApplication {
-    name = "ai-vm-pull-model";
+    name = "ai-pull-model";
     runtimeInputs = with pkgs; [ bash coreutils ];
     text = ''
       set -euo pipefail
@@ -200,7 +200,7 @@ DOCKER_SOURCES
 
 
   aiVmIndexProject = pkgs.writeShellApplication {
-    name = "ai-vm-index-project";
+    name = "ai-index-project";
     runtimeInputs = with pkgs; [ bash coreutils curl git jq python312 ripgrep ];
     text = ''
       set -euo pipefail
@@ -387,13 +387,13 @@ PY_INDEX
   };
 
   aiVmSearchProject = pkgs.writeShellApplication {
-    name = "ai-vm-search-project";
+    name = "ai-search-project";
     runtimeInputs = with pkgs; [ bash coreutils curl git jq python312 ];
     text = ''
       set -euo pipefail
 
       if [ "$#" -lt 1 ]; then
-        echo "usage: ai-vm-search-project <query> [repo]" >&2
+        echo "usage: ai-search-project <query> [repo]" >&2
         exit 2
       fi
 
@@ -481,7 +481,7 @@ PY_SEARCH
 
 
   aiVmAgent = pkgs.writeShellApplication {
-    name = "ai-vm-agent";
+    name = "ai-agent";
     runtimeInputs = with pkgs; [ bash coreutils findutils git gnused opencode ];
     text = ''
       set -euo pipefail
@@ -489,9 +489,9 @@ PY_SEARCH
       usage() {
         cat >&2 <<'USAGE'
 usage:
-  ai-vm-agent review <repo-path>
-  ai-vm-agent worker <repo-path> <branch-name> <prompt-file>
-  ai-vm-agent status <repo-path>
+  ai-agent review <repo-path>
+  ai-agent worker <repo-path> <branch-name> <prompt-file>
+  ai-agent status <repo-path>
 USAGE
       }
 
@@ -513,8 +513,8 @@ USAGE
 
       logs_dir() {
         root="$1"
-        mkdir -p "$root/.ai-vm-agent/logs"
-        printf '%s\n' "$root/.ai-vm-agent/logs"
+        mkdir -p "$root/.ai-agent/logs"
+        printf '%s\n' "$root/.ai-agent/logs"
       }
 
       case "$cmd" in
@@ -567,8 +567,8 @@ You are a bounded sidecar worker. Work only on the scope described above. Do not
           git -C "$root" worktree list
           echo
           echo "logs:"
-          if [ -d "$root/.ai-vm-agent/logs" ]; then
-            find "$root/.ai-vm-agent/logs" -maxdepth 1 -type f -printf '%TY-%Tm-%Td %TH:%TM %p\n' | sort
+          if [ -d "$root/.ai-agent/logs" ]; then
+            find "$root/.ai-agent/logs" -maxdepth 1 -type f -printf '%TY-%Tm-%Td %TH:%TM %p\n' | sort
           else
             echo "none"
           fi
@@ -584,7 +584,7 @@ You are a bounded sidecar worker. Work only on the scope described above. Do not
 
 
   aiVmOrchestrator = pkgs.writeShellApplication {
-    name = "ai-vm-orchestrator";
+    name = "ai-orchestrator";
     runtimeInputs = [ aiVmIndexProject aiVmSearchProject aiVmAgent ] ++ (with pkgs; [ bash coreutils findutils gawk git gnused jq opencode ]);
     text = ''
       set -euo pipefail
@@ -592,11 +592,11 @@ You are a bounded sidecar worker. Work only on the scope described above. Do not
       usage() {
         cat >&2 <<'USAGE'
 usage:
-  ai-vm-orchestrator prepare <repo-path> [query]
-  ai-vm-orchestrator review <repo-path> [query]
-  ai-vm-orchestrator worker <repo-path> <branch-name> <prompt-file> [query]
-  ai-vm-orchestrator gate <repo-path>
-  ai-vm-orchestrator status <repo-path>
+  ai-orchestrator prepare <repo-path> [query]
+  ai-orchestrator review <repo-path> [query]
+  ai-orchestrator worker <repo-path> <branch-name> <prompt-file> [query]
+  ai-orchestrator gate <repo-path>
+  ai-orchestrator status <repo-path>
 USAGE
       }
 
@@ -614,8 +614,8 @@ USAGE
 
       state_dir() {
         root="$1"
-        mkdir -p "$root/.ai-vm-agent/orchestrator"
-        printf '%s\n' "$root/.ai-vm-agent/orchestrator"
+        mkdir -p "$root/.ai-agent/orchestrator"
+        printf '%s\n' "$root/.ai-agent/orchestrator"
       }
 
       context_file() {
@@ -635,8 +635,8 @@ USAGE
           echo "Query: $query"
           echo
           echo '## Qdrant search results'
-          ai-vm-index-project "$root"
-          ai-vm-search-project "$query" "$root" || true
+          ai-index-project "$root"
+          ai-search-project "$query" "$root" || true
           echo
           echo '## Git status'
           git -C "$root" status --short
@@ -667,7 +667,7 @@ USAGE
           prompt_file="$(mktemp)"
           trap 'rm -f "$prompt_file"' EXIT
           printf '%s\n' "$prompt" > "$prompt_file"
-          ai-vm-agent worker "$root" "ai/review-$(date +%Y%m%d-%H%M%S)" "$prompt_file"
+          ai-agent worker "$root" "ai/review-$(date +%Y%m%d-%H%M%S)" "$prompt_file"
           ;;
 
         worker)
@@ -684,7 +684,7 @@ USAGE
             echo
             cat "$source_prompt"
           } > "$prompt_file"
-          ai-vm-agent worker "$root" "$branch" "$prompt_file"
+          ai-agent worker "$root" "$branch" "$prompt_file"
           ;;
 
         gate)
@@ -710,8 +710,8 @@ USAGE
           done
           echo
           echo '## Recent sidecar logs'
-          if [ -d "$root/.ai-vm-agent/logs" ]; then
-            find "$root/.ai-vm-agent/logs" -maxdepth 1 -type f -printf '%T@ %p\n' | sort -nr | head -5 | while read -r _ log; do
+          if [ -d "$root/.ai-agent/logs" ]; then
+            find "$root/.ai-agent/logs" -maxdepth 1 -type f -printf '%T@ %p\n' | sort -nr | head -5 | while read -r _ log; do
               echo
               echo "### $log"
               tail -80 "$log" || true
@@ -724,7 +724,7 @@ USAGE
         status)
           if [ "$#" -ne 1 ]; then usage; exit 2; fi
           root="$(repo_root "$1")"
-          ai-vm-agent status "$root"
+          ai-agent status "$root"
           ctx="$(context_file "$root")"
           if [ -f "$ctx" ]; then
             echo
@@ -741,7 +741,7 @@ USAGE
   };
 
   aiVmSetOpencodePassword = pkgs.writeShellApplication {
-    name = "ai-vm-set-opencode-password";
+    name = "ai-set-opencode-password";
     runtimeInputs = with pkgs; [ bash coreutils openssl ];
     text = ''
       set -euo pipefail

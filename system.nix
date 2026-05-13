@@ -582,6 +582,164 @@ You are a bounded sidecar worker. Work only on the scope described above. Do not
     '';
   };
 
+
+  aiVmOrchestrator = pkgs.writeShellApplication {
+    name = "ai-vm-orchestrator";
+    runtimeInputs = [ aiVmIndexProject aiVmSearchProject aiVmAgent ] ++ (with pkgs; [ bash coreutils findutils gawk git gnused jq opencode ]);
+    text = ''
+      set -euo pipefail
+
+      usage() {
+        cat >&2 <<'USAGE'
+usage:
+  ai-vm-orchestrator prepare <repo-path> [query]
+  ai-vm-orchestrator review <repo-path> [query]
+  ai-vm-orchestrator worker <repo-path> <branch-name> <prompt-file> [query]
+  ai-vm-orchestrator gate <repo-path>
+  ai-vm-orchestrator status <repo-path>
+USAGE
+      }
+
+      if [ "$#" -lt 1 ]; then
+        usage
+        exit 2
+      fi
+
+      cmd="$1"
+      shift
+
+      repo_root() {
+        git -C "$1" rev-parse --show-toplevel
+      }
+
+      state_dir() {
+        root="$1"
+        mkdir -p "$root/.ai-vm-agent/orchestrator"
+        printf '%s\n' "$root/.ai-vm-agent/orchestrator"
+      }
+
+      context_file() {
+        root="$1"
+        dir="$(state_dir "$root")"
+        printf '%s\n' "$dir/context.md"
+      }
+
+      prepare_context() {
+        root="$1"
+        query="''${2:-project architecture test workflow agent instructions}"
+        ctx="$(context_file "$root")"
+        {
+          echo '# Retrieved project context'
+          echo
+          echo "Repository: $root"
+          echo "Query: $query"
+          echo
+          echo '## Qdrant search results'
+          ai-vm-index-project "$root"
+          ai-vm-search-project "$query" "$root" || true
+          echo
+          echo '## Git status'
+          git -C "$root" status --short
+          echo
+          if [ -f "$root/AGENTS.md" ]; then
+            echo '## AGENTS.md'
+            sed -n '1,220p' "$root/AGENTS.md"
+          fi
+        } > "$ctx"
+        printf '%s\n' "$ctx"
+      }
+
+      case "$cmd" in
+        prepare)
+          if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then usage; exit 2; fi
+          root="$(repo_root "$1")"
+          query="''${2:-project architecture test workflow agent instructions}"
+          ctx="$(prepare_context "$root" "$query")"
+          echo "context=$ctx"
+          ;;
+
+        review)
+          if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then usage; exit 2; fi
+          root="$(repo_root "$1")"
+          query="''${2:-correctness bugs missing tests security risks}"
+          ctx="$(prepare_context "$root" "$query")"
+          prompt="Use the retrieved context in $ctx, then review this branch for correctness bugs, missing tests, security risks, and behavior changes. Do not modify files. Report findings with file paths and line references when possible."
+          prompt_file="$(mktemp)"
+          trap 'rm -f "$prompt_file"' EXIT
+          printf '%s\n' "$prompt" > "$prompt_file"
+          ai-vm-agent worker "$root" "ai/review-$(date +%Y%m%d-%H%M%S)" "$prompt_file"
+          ;;
+
+        worker)
+          if [ "$#" -lt 3 ] || [ "$#" -gt 4 ]; then usage; exit 2; fi
+          root="$(repo_root "$1")"
+          branch="$2"
+          source_prompt="$3"
+          query="''${4:-$(cat "$source_prompt") }"
+          ctx="$(prepare_context "$root" "$query")"
+          prompt_file="$(mktemp)"
+          trap 'rm -f "$prompt_file"' EXIT
+          {
+            echo "Use the retrieved project context in $ctx before editing."
+            echo
+            cat "$source_prompt"
+          } > "$prompt_file"
+          ai-vm-agent worker "$root" "$branch" "$prompt_file"
+          ;;
+
+        gate)
+          if [ "$#" -ne 1 ]; then usage; exit 2; fi
+          root="$(repo_root "$1")"
+          echo "source=$root"
+          echo
+          echo '## Source worktree status'
+          git -C "$root" status --short
+          echo
+          echo '## Sidecar worktrees'
+          git -C "$root" worktree list --porcelain | awk '
+            /^worktree / { worktree=$2 }
+            /^branch / { branch=$2; print worktree " " branch }
+          ' | while read -r wt branch; do
+            [ "$wt" = "$root" ] && continue
+            echo
+            echo "### $branch"
+            echo "worktree=$wt"
+            git -C "$wt" status --short || true
+            echo
+            git -C "$wt" diff --stat HEAD || true
+          done
+          echo
+          echo '## Recent sidecar logs'
+          if [ -d "$root/.ai-vm-agent/logs" ]; then
+            find "$root/.ai-vm-agent/logs" -maxdepth 1 -type f -printf '%T@ %p\n' | sort -nr | head -5 | while read -r _ log; do
+              echo
+              echo "### $log"
+              tail -80 "$log" || true
+            done
+          else
+            echo 'none'
+          fi
+          ;;
+
+        status)
+          if [ "$#" -ne 1 ]; then usage; exit 2; fi
+          root="$(repo_root "$1")"
+          ai-vm-agent status "$root"
+          ctx="$(context_file "$root")"
+          if [ -f "$ctx" ]; then
+            echo
+            echo "context=$ctx"
+          fi
+          ;;
+
+        *)
+          usage
+          exit 2
+          ;;
+      esac
+    '';
+  };
+
   aiVmSetOpencodePassword = pkgs.writeShellApplication {
     name = "ai-vm-set-opencode-password";
     runtimeInputs = with pkgs; [ bash coreutils openssl ];
@@ -617,6 +775,7 @@ in
       aiVmIndexProject
       aiVmSearchProject
       aiVmAgent
+      aiVmOrchestrator
       aiVmSetOpencodePassword
     ] ++ (with pkgs; [
       git

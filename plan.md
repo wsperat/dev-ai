@@ -902,6 +902,32 @@ ai-vm-agent worker <repo-path> <branch-name> <prompt-file>
 
 `review` creates a timestamped read-only review worktree and runs `opencode run` there. `worker` creates a named implementation worktree and appends a bounded-scope instruction to the supplied prompt file. `status` lists worktrees and sidecar logs. Logs are stored under `.ai-vm-agent/logs` in the source repository.
 
+The current implementation also starts the orchestration layer with `ai-vm-orchestrator`:
+
+```bash
+ai-vm-orchestrator prepare <repo-path> [query]
+ai-vm-orchestrator review <repo-path> [query]
+ai-vm-orchestrator worker <repo-path> <branch-name> <prompt-file> [query]
+ai-vm-orchestrator gate <repo-path>
+ai-vm-orchestrator status <repo-path>
+```
+
+`prepare` indexes the repo, retrieves Qdrant context, records git status, and includes `AGENTS.md` when present. `review` and `worker` pass that context to sidecars. `gate` reports sidecar worktree status, diff stats, and recent logs so the main session can inspect work before merging.
+
+
+### Missing Claude Code-like orchestration
+
+The current implementation has the building blocks, but it is not yet a full Claude Code-style orchestrator. The remaining gaps are:
+
+- Automatic context assembly before agent runs: index the repository, query Qdrant, read `AGENTS.md`, inspect git status, and pass the resulting context into the agent prompt.
+- Automatic sidecar selection: decide when a task needs a review, research, test, or bounded implementation sidecar instead of requiring the user to launch each one manually.
+- A merge gate: inspect every sidecar worktree, summarize diffs and logs, run project checks, and refuse overlapping or unsafe changes before anything is merged back.
+- Session memory: write final decisions, commands, failures, and architectural notes back into Qdrant after a run.
+- Task registry: track active sidecars, ownership scopes, branches, prompts, logs, and completion state in a machine-readable file.
+- Policy enforcement: prevent sidecars from editing outside their assigned ownership scope, and flag dirty source worktrees before spawning new workers.
+
+The implementation should move toward this in small steps. First add an `ai-vm-orchestrator` wrapper that prepares Qdrant-backed context, delegates to `ai-vm-agent`, and provides a `gate` command for reviewing sidecar worktrees and logs. Later passes can add automatic task planning, memory writes, and stricter policy enforcement.
+
 ---
 
 ## 13. Use aider for narrow patch work

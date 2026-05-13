@@ -202,28 +202,28 @@ curl http://127.0.0.1:6333/collections
 
 ## Sidecar agents
 
-The main OpenCode session should own the coding loop. Use sidecar agents only for bounded review, investigation, verification, or isolated implementation tasks. The wrapper creates separate git worktrees next to the target repository and writes logs under `.ai-vm-agent/logs` in the source repository.
+The main OpenCode session should own the coding loop. Use sidecar agents only for bounded review, investigation, verification, or isolated implementation tasks. The wrappers create separate git worktrees next to the target repository and write logs and orchestration state under `.ai-vm-agent/`, which is ignored by Git.
 
-Check active worktrees and sidecar logs:
+Manual sidecar helper commands:
 
 ```bash
 ai-vm-agent status /path/to/your/project
-```
-
-Run a read-only review sidecar:
-
-```bash
 ai-vm-agent review /path/to/your/project
-```
-
-Run a bounded worker from a prompt file:
-
-```bash
 printf 'Only edit src/auth. Fix token refresh and add tests.' > /tmp/worker-prompt.txt
 ai-vm-agent worker /path/to/your/project ai/fix-token-refresh /tmp/worker-prompt.txt
 ```
 
-Inspect sidecar diffs from the main worktree before merging or cherry-picking anything back.
+Orchestrator commands:
+
+```bash
+ai-vm-orchestrator prepare /path/to/your/project "auth test workflow"
+ai-vm-orchestrator review /path/to/your/project
+ai-vm-orchestrator worker /path/to/your/project ai/fix-token-refresh /tmp/worker-prompt.txt
+ai-vm-orchestrator gate /path/to/your/project
+ai-vm-orchestrator status /path/to/your/project
+```
+
+`prepare` refreshes the Qdrant index, retrieves project context, records git status, and includes `AGENTS.md` when present. `worker` and `review` prepend that retrieved context before delegating to sidecars. `gate` summarizes sidecar worktrees and recent logs so the main session can inspect work before merging or cherry-picking anything back.
 
 ## Operational checks
 

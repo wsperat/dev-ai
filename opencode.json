@@ -24,5 +24,8 @@
     }
   },
   "model": "ollama/devstral:latest",
-  "small_model": "ollama/qwen2.5-coder:3b"
+  "small_model": "ollama/qwen2.5-coder:3b",
+  "disabled_providers": [
+    "opencode"
+  ]
 }
